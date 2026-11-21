@@ -4,7 +4,15 @@ import config from './config';
 import { MUTATING_METHODS } from '../middlewares/auth.middleware';
 
 const READ_METHODS = ['GET', 'HEAD', 'OPTIONS'];
-const ALL_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+const ALL_METHODS = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+  'OPTIONS',
+];
 
 /** The method of a request; for a CORS preflight, the method it asks for. */
 const requestedMethod = (req: Pick<Request, 'method' | 'headers'>): string => {
@@ -94,12 +102,15 @@ export const createCorsPolicy = (
   };
 };
 
-const policy = createCorsPolicy(config.cors.origin);
+const policy: CorsPolicy = createCorsPolicy(config.cors.origin);
 
-export const {
-  isRequestOriginAllowed,
-  rejectDisallowedOrigin,
-  rejectDisallowedOriginForWrites,
-} = policy;
+// Annotated: `tsc --declaration` cannot name the inferred express types.
+export const isRequestOriginAllowed: CorsPolicy['isRequestOriginAllowed'] =
+  policy.isRequestOriginAllowed;
+export const rejectDisallowedOrigin: RequestHandler =
+  policy.rejectDisallowedOrigin;
+export const rejectDisallowedOriginForWrites: RequestHandler =
+  policy.rejectDisallowedOriginForWrites;
 
-export default policy.corsOptions;
+const corsOptions: CorsOptionsDelegate<Request> = policy.corsOptions;
+export default corsOptions;

@@ -12,10 +12,14 @@
  *     (log and ln are both the natural logarithm, like Math.log)
  *
  * Precedence and associativity are JavaScript's, and every operation is the
- * JavaScript one, so a formula that was valid before gives the same result.
- * As in JavaScript, a unary sign directly before a power is rejected:
- * write -(x ** 2) or (-x) ** 2 instead of -x ** 2.
- * Note: in the old evaluator `^` was JavaScript's bitwise XOR.
+ * JavaScript one. As in JavaScript, a unary sign directly before a power is
+ * rejected: write -(x ** 2) or (-x) ** 2 instead of -x ** 2.
+ *
+ * Formulas give the same results as with the old evaluator, except those
+ * findLegacyDifferences reports (`^`, bare functions, Math.ln, a leading line
+ * break) and the JavaScript outside this grammar (`%`, `?:`, comparisons,
+ * comments, hex, octal or `1_000` literals, Infinity, Number(), ...), which
+ * now fails, so the fuel estimate falls back to 0.5.
  */
 
 export class FormulaError extends Error {}
@@ -396,6 +400,10 @@ const evaluateNode = (
   }
 };
 
+/** `return <formula>;` accepted trailing semicolons, so they are ignored. */
+const stripTrailing = (formula: string): string =>
+  formula.replace(/[\s;]+$/, '');
+
 /**
  * Evaluates an arithmetic formula. Throws FormulaError when the formula uses
  * anything outside the grammar described at the top of this file.
@@ -412,9 +420,63 @@ export const evaluateArithmetic = (
       `Formula is longer than ${MAX_FORMULA_LENGTH} characters`,
     );
   }
-  // `return <formula>;` accepted trailing semicolons, so they are ignored.
-  const source = formula.replace(/[\s;]+$/, '');
   const variableNames = new Set(Object.keys(variables));
-  const ast = new Parser(tokenize(source), variableNames).parse();
+  const ast = new Parser(
+    tokenize(stripTrailing(formula)),
+    variableNames,
+  ).parse();
   return evaluateNode(ast, variables);
+};
+
+const STARTS_WITH_LINE_BREAK = /^[^\S\r\n\u2028\u2029]*[\r\n\u2028\u2029]/;
+
+const isOperator = (token: Token | undefined, operator: Operator): boolean =>
+  token?.kind === 'operator' && token.operator === operator;
+
+/**
+ * Why a formula that evaluateArithmetic accepts gives other results than the
+ * evaluator used before phase 0 (`new Function` + `with (context)`), or an
+ * empty list when the results are the same:
+ * - `^` was bitwise XOR (with a lower precedence than `+`);
+ * - the bare functions (exp(...) without "Math.") and Math.ln did not
+ *   exist: the formula failed and the fuel estimate was the 0.5 fallback;
+ * - a formula starting with a line break returned nothing (NaN): a line
+ *   break after `return` ends the statement.
+ * Throws FormulaError when the formula is not accepted (results are then
+ * always the 0.5 fallback).
+ */
+export const findLegacyDifferences = (
+  formula: string,
+  variables: Readonly<Record<string, number>>,
+): string[] => {
+  evaluateArithmetic(formula, variables); // throws when not accepted
+
+  const differences = new Set<string>();
+  if (STARTS_WITH_LINE_BREAK.test(formula)) {
+    differences.add(
+      'starts with a line break: the old evaluator returned nothing (NaN)',
+    );
+  }
+  const tokens = tokenize(stripTrailing(formula));
+  tokens.forEach((token, index) => {
+    if (isOperator(token, '**') && formula[token.position] === '^') {
+      differences.add("'^' was bitwise XOR, it is now a power");
+    }
+    if (token.kind !== 'identifier') return;
+    const isMathMember = isOperator(tokens[index - 1], '.');
+    if (isMathMember && token.name === 'ln') {
+      differences.add(
+        'Math.ln did not exist (fuel estimate 0.5), it is now the natural logarithm',
+      );
+    } else if (
+      !isMathMember &&
+      BARE_FUNCTIONS.has(token.name) &&
+      isOperator(tokens[index + 1], '(')
+    ) {
+      differences.add(
+        `${token.name}() without "Math." did not exist (fuel estimate 0.5), it is now evaluated`,
+      );
+    }
+  });
+  return [...differences];
 };

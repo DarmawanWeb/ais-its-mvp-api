@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   evaluateArithmetic,
+  findLegacyDifferences,
   FormulaError,
 } from '../src/utils/cii/safe-formula';
 import { evaluateFormula } from '../src/utils/cii/fuel-calculation';
@@ -212,5 +213,113 @@ describe('evaluateFormula (safe evaluator)', () => {
         evaluateArithmetic(undefined as unknown as string, { speedKnot: 1 }),
       ).toThrow(FormulaError);
     });
+  });
+});
+
+describe('findLegacyDifferences (pnpm check:formulas)', () => {
+  const differences = (formula: string) =>
+    findLegacyDifferences(formula, { speedKnot: 0 });
+  const resultsDiffer = (formula: string) =>
+    SPEEDS.some(
+      (speedKnot) =>
+        !Object.is(
+          evaluateFormula(formula, { speedKnot }),
+          legacyEvaluateFormula(formula, { speedKnot }),
+        ),
+    );
+
+  it('reports nothing for formulas whose results did not change', () => {
+    for (const formula of REALISTIC_FORMULAS) {
+      expect(differences(formula), formula).toEqual([]);
+    }
+    expect(differences('Math.exp(1) + Math.max(1, speedKnot)')).toEqual([]);
+  });
+
+  it.each([
+    ['0.2 * exp(0.1 * speedKnot) + 0.5', 'exp() without "Math." did not exist'],
+    ['sqrt(speedKnot) * 3', 'sqrt() without "Math." did not exist'],
+    ['max(speedKnot, 10)', 'max() without "Math." did not exist'],
+    ['Math.ln(speedKnot + 1) * 2', 'Math.ln did not exist'],
+    ['speedKnot ^ 2 / 10', "'^' was bitwise XOR"],
+    ['\n  0.1 * speedKnot + 1', 'starts with a line break'],
+  ])('reports %j, whose results changed', (formula, message) => {
+    expect(differences(formula)).toEqual([expect.stringContaining(message)]);
+    expect(resultsDiffer(formula)).toBe(true);
+  });
+
+  it('reports each difference once', () => {
+    expect(differences('exp(1) + exp(2) ^ 2 ^ 2')).toHaveLength(2);
+  });
+
+  it('throws FormulaError for formulas that now always give 0.5', () => {
+    expect(() => differences('speedKnot % 3')).toThrow(FormulaError);
+  });
+
+  it('finds every difference in 3000 generated formulas', () => {
+    // Deterministic pseudo-random generator (mulberry32).
+    let seed = 20261121;
+    const random = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T>(items: readonly T[]): T =>
+      items[Math.floor(random() * items.length)];
+    const NUMBERS = ['0', '1', '2', '0.5', '.25', '3.', '1e-2', '2.5E+1', '10'];
+    const MATH = [
+      'exp',
+      'log',
+      'sqrt',
+      'abs',
+      'pow',
+      'min',
+      'max',
+      'ln',
+      'floor',
+    ];
+    const BARE = ['exp', 'log', 'ln', 'sqrt', 'pow', 'abs', 'min', 'max'];
+
+    const args = (depth: number): string =>
+      Array.from({ length: 1 + Math.floor(random() * 2) }, () =>
+        expression(depth - 1),
+      ).join(', ');
+    const expression = (depth: number): string => {
+      const roll = random();
+      if (depth <= 0 || roll < 0.3) {
+        return pick([pick(NUMBERS), 'speedKnot', 'Math.PI', 'Math.E']);
+      }
+      if (roll < 0.55) {
+        const operator = pick(['+', '-', '*', '/', '**', '^']);
+        return `${expression(depth - 1)} ${operator} ${expression(depth - 1)}`;
+      }
+      if (roll < 0.65) return `(${expression(depth - 1)})`;
+      if (roll < 0.72) return `-${expression(depth - 1)}`;
+      if (roll < 0.9) return `Math.${pick(MATH)}(${args(depth)})`;
+      return `${pick(BARE)}(${args(depth)})`;
+    };
+
+    let reported = 0;
+    let unchanged = 0;
+    const missed: string[] = [];
+    for (let i = 0; i < 3000; i++) {
+      const formula = (random() < 0.05 ? '\n ' : '') + expression(4);
+      let found: string[];
+      try {
+        found = differences(formula);
+      } catch {
+        continue; // not accepted: always 0.5 now
+      }
+      if (found.length > 0) {
+        reported += 1;
+      } else {
+        unchanged += 1;
+        if (resultsDiffer(formula)) missed.push(formula);
+      }
+    }
+
+    expect(missed).toEqual([]);
+    expect(reported).toBeGreaterThan(300);
+    expect(unchanged).toBeGreaterThan(300);
   });
 });

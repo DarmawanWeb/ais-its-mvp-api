@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createApiKeyAuth,
   createRequireAuth,
   createRequireAuthForMutations,
 } from '../src/middlewares/auth.middleware';
@@ -212,6 +213,64 @@ describe('requireAuthForMutations', () => {
     auth.mockClear();
     const next = vi.fn();
     guard(fakeRequest({}, method), fakeResponse() as unknown as Response, next);
+    expect(auth).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith();
+  });
+});
+
+describe('createApiKeyAuth (TELEMETRY_API_KEYS)', () => {
+  const KEYS = [
+    'first-key-0123456789abcdef0123456789',
+    'second-key-0123456789abcdef012345',
+  ];
+  const apiKeyAuth = createApiKeyAuth({
+    apiKeys: KEYS,
+    role: 'telemetry:ingest',
+  });
+
+  it('passes requests without X-API-Key on, unauthenticated', () => {
+    const { res, next } = run(apiKeyAuth, fakeRequest());
+    expect(next).toHaveBeenCalledWith();
+    expect(res.locals.user).toBeUndefined();
+  });
+
+  it('authenticates a configured key', () => {
+    const { res, next } = run(
+      apiKeyAuth,
+      fakeRequest({ 'X-API-Key': KEYS[1] }),
+    );
+    expect(next).toHaveBeenCalledWith();
+    expect(res.locals.user).toEqual({
+      id: 'api-key-2',
+      roles: ['telemetry:ingest'],
+      source: 'api-key',
+    });
+  });
+
+  it.each([
+    ['a wrong key', apiKeyAuth, 'wrong-key'],
+    ['an empty key', apiKeyAuth, ''],
+    [
+      'any key when none is configured',
+      createApiKeyAuth({ apiKeys: [], role: 'x' }),
+      KEYS[0],
+    ],
+  ])('rejects %s with 401', (_label, middleware, key) => {
+    const { res, next } = run(middleware, fakeRequest({ 'X-API-Key': key }));
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toMatchObject({ message: 'Invalid API key' });
+  });
+
+  it('lets requireAuthForMutations pass requests it authenticated', () => {
+    const auth = vi.fn();
+    const guard = createRequireAuthForMutations(auth);
+    const res = fakeResponse();
+    res.locals.user = { id: 'api-key-1', roles: [], source: 'api-key' };
+    const next = vi.fn();
+
+    guard(fakeRequest({}, 'POST'), res as unknown as Response, next);
+
     expect(auth).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith();
   });

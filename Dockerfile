@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Legacy MVP API (Express + Mongoose). Build: docker build -t seemp-legacy-be .
-# Run:   docker run --env-file .env -p 3020:3020 seemp-legacy-be
+# Legacy MVP API (Express + Mongoose). Build: docker build -t ais-its-mvp-api .
+# Run:   docker run --env-file .env -p 3020:3020 ais-its-mvp-api
 
 FROM node:22-alpine AS base
 WORKDIR /app

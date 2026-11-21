@@ -28,8 +28,8 @@ const isLocalOrigin = (origin: string): boolean => {
 };
 
 /**
- * Security-relevant configuration problems. Logged at startup and checked
- * before a deploy by `pnpm check:env` (bin/check-env.ts).
+ * Security-relevant configuration problems, logged at startup. The pre-deploy
+ * check uses collectDeployProblems.
  */
 export const collectConfigProblems = (): ConfigProblem[] => {
   const isProduction = config.environment === 'production';
@@ -44,7 +44,9 @@ export const collectConfigProblems = (): ConfigProblem[] => {
       `JWT_SECRET ${secretProblem}: login is disabled and Bearer tokens are refused. ` +
         `Use at least ${MIN_PRODUCTION_SECRET_LENGTH} random characters, e.g. from: openssl rand -hex 32`,
     );
-  } else if ((process.env.JWT_SECRET ?? '').length < MIN_PRODUCTION_SECRET_LENGTH) {
+  } else if (
+    (process.env.JWT_SECRET ?? '').length < MIN_PRODUCTION_SECRET_LENGTH
+  ) {
     report(
       'warn',
       `JWT_SECRET is shorter than ${MIN_PRODUCTION_SECRET_LENGTH} characters: production refuses it.`,
@@ -81,6 +83,13 @@ export const collectConfigProblems = (): ConfigProblem[] => {
       );
     }
   });
+  if (isProduction && config.auth.telemetryApiKeys.length === 0) {
+    report(
+      'warn',
+      'TELEMETRY_API_KEYS is not set: fuel meters (POST /api/v1/ships/fuel-data, ' +
+        'POST /api/v1/telemetry/:mmsi/fuel) need a login token, which expires after JWT_EXPIRATION.',
+    );
+  }
 
   if (config.auth.trustForwardAuth) {
     report(
@@ -119,6 +128,35 @@ export const collectConfigProblems = (): ConfigProblem[] => {
       'ALLOWED_ORIGINS is not set or lists only localhost: browsers can read from any origin, ' +
         'but logging in and writes from the dashboards are refused (403).',
     );
+  }
+
+  return problems;
+};
+
+/**
+ * collectConfigProblems plus INGEST_SOCKET_TOKEN, which the ingest socket
+ * server reports itself at startup. Checked before a deploy by
+ * `pnpm check:env` (bin/check-env.ts).
+ */
+export const collectDeployProblems = (): ConfigProblem[] => {
+  const isProduction = config.environment === 'production';
+  const problems = collectConfigProblems();
+  const { socketToken } = config.ingest;
+
+  if (!socketToken) {
+    problems.push({
+      level: isProduction ? 'error' : 'warn',
+      message:
+        'INGEST_SOCKET_TOKEN is not set: the ingest socket server rejects every connection in production.',
+    });
+  } else {
+    const tokenProblem = describeSecretProblem(socketToken, isProduction);
+    if (tokenProblem) {
+      problems.push({
+        level: 'warn',
+        message: `INGEST_SOCKET_TOKEN ${tokenProblem}: use a long random value.`,
+      });
+    }
   }
 
   return problems;

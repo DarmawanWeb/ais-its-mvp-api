@@ -52,6 +52,11 @@ jobs:
               echo "📁 Creating logs directory if not exists"
               mkdir -p logs
 
+              # Stops the deploy (the running process keeps serving) when .env
+              # lacks what phase 0 needs: JWT_SECRET, ADMIN_*, INGEST_SOCKET_TOKEN...
+              echo "🔎 Checking the production configuration"
+              NODE_ENV=production node dist/bin/check-env.js
+
               echo "🚀 Deploying with PM2 using ecosystem config"
               if pm2 describe ais-be > /dev/null 2>&1; then
                 echo "♻️  Restarting existing PM2 process"

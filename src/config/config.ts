@@ -20,7 +20,10 @@ const parsePositiveNumber = (
 };
 
 /** Used when ALLOWED_ORIGINS is not set: the Vite dev server and `pnpm start`. */
-const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
 
 /**
  * An ALLOWED_ORIGINS entry as browsers send it in the Origin header: lower
@@ -32,7 +35,8 @@ export const normalizeOrigin = (entry: string): string => {
   const trimmed = entry.trim().replace(/\/+$/, '');
   try {
     const url = new URL(trimmed);
-    if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+    if (url.protocol === 'http:' || url.protocol === 'https:')
+      return url.origin;
   } catch {
     // not a URL
   }

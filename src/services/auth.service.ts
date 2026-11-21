@@ -31,17 +31,27 @@ const normalizeEmail = async (email: string): Promise<string> => {
 };
 
 /**
+ * Password checks that may run at the same time. bcrypt takes about 0.3 s of
+ * CPU at cost 12, on the thread that also serves the API and the ingest
+ * socket; further attempts answer 503 at once instead of queueing CPU work
+ * (the per-IP login rate limit does not stop many addresses).
+ */
+const MAX_CONCURRENT_PASSWORD_CHECKS = 2;
+
+/**
  * Phase 0 login: a single bootstrap admin configured with ADMIN_EMAIL and
  * ADMIN_PASSWORD_HASH. Users, roles and sessions arrive with the v2 auth service.
  */
 export class AuthService {
   private normalizedAdminEmail?: Promise<string>;
+  private runningPasswordChecks = 0;
 
   constructor(
     private readonly admin: AdminCredentials = {
       email: config.auth.adminEmail,
       passwordHash: config.auth.adminPasswordHash,
     },
+    private readonly maxConcurrentPasswordChecks = MAX_CONCURRENT_PASSWORD_CHECKS,
   ) {}
 
   /** Admin credentials, a usable JWT_SECRET and a valid JWT_EXPIRATION. */
@@ -68,10 +78,7 @@ export class AuthService {
     this.normalizedAdminEmail ??= normalizeEmail(this.admin.email);
     const adminEmail = await this.normalizedAdminEmail;
     // Always run bcrypt, so the response time does not reveal a wrong email.
-    const passwordMatches = await bcrypt.compare(
-      password,
-      this.admin.passwordHash,
-    );
+    const passwordMatches = await this.checkPassword(password);
     if (email !== adminEmail || !passwordMatches) {
       throw new AuthenticationError('Invalid email or password');
     }
@@ -85,5 +92,20 @@ export class AuthService {
       tokenType: 'Bearer',
       expiresIn: config.jwt.expiration,
     };
+  }
+
+  /** bcrypt.compare, at most maxConcurrentPasswordChecks at a time. */
+  private async checkPassword(password: string): Promise<boolean> {
+    if (this.runningPasswordChecks >= this.maxConcurrentPasswordChecks) {
+      throw new ServiceUnavailableError(
+        'Too many login attempts at once, please try again',
+      );
+    }
+    this.runningPasswordChecks += 1;
+    try {
+      return await bcrypt.compare(password, this.admin.passwordHash);
+    } finally {
+      this.runningPasswordChecks -= 1;
+    }
   }
 }

@@ -11,18 +11,9 @@
  * a deploy stops instead of a "healthy" API refusing every writer.
  */
 import config from '../src/config/config';
-import { collectConfigProblems } from '../src/config/security';
+import { collectDeployProblems } from '../src/config/security';
 
-const isProduction = config.environment === 'production';
-const problems = collectConfigProblems();
-
-if (!config.ingest.socketToken) {
-  problems.push({
-    level: isProduction ? 'error' : 'warn',
-    message:
-      'INGEST_SOCKET_TOKEN is not set: the ingest socket server rejects every connection in production.',
-  });
-}
+const problems = collectDeployProblems();
 
 for (const { level, message } of problems) {
   console[level === 'error' ? 'error' : 'warn'](
