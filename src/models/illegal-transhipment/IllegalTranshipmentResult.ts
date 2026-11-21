@@ -60,7 +60,16 @@ const illegalTranshipmentResultSchema: Schema = new Schema(
   { timestamps: true },
 );
 
-illegalTranshipmentResultSchema.index({ ship1MMSI: 1, ship2MMSI: 1 });
+// Latest detection of a pair (also serves plain pair lookups).
+illegalTranshipmentResultSchema.index({
+  ship1MMSI: 1,
+  ship2MMSI: 1,
+  detectedAt: -1,
+});
+// Second branch of the "results of a ship" $or query.
+illegalTranshipmentResultSchema.index({ ship2MMSI: 1, detectedAt: -1 });
+// GET /illegal-transhipment/results (illegal results, newest first).
+illegalTranshipmentResultSchema.index({ isIllegal: 1, detectedAt: -1 });
 illegalTranshipmentResultSchema.index({ detectedAt: -1 });
 
 const IllegalTranshipmentResult = mongoose.model<IIllegalTranshipmentResult>(

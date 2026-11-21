@@ -17,6 +17,26 @@ import {
   ICIICalculation,
   IFuelConsumption,
 } from '../../types/second-formula.types';
+import {
+  CIINotAvailableError,
+  NotFoundError,
+} from '../../middlewares/error.middleware';
+
+/**
+ * Why a computed CII cannot be stored, or null when it can. A ship that has
+ * not covered any distance yet has no CII (attained CII divides by distance).
+ */
+export const getCIIUnavailableReason = (
+  cii: ICIICalculation,
+): string | null => {
+  if (!(cii.totalDistance > 0)) {
+    return 'the ship has not covered any distance yet';
+  }
+  if (!Number.isFinite(cii.ciiAttained) || !Number.isFinite(cii.ciiRating)) {
+    return 'the fuel estimate is not a finite number';
+  }
+  return null;
+};
 
 export class CIIService {
   private shipRepository: ShipRepository;
@@ -36,31 +56,17 @@ export class CIIService {
     if (!speedData) {
       throw new Error('Insufficient data to calculate speed');
     }
-    let latestCII: ICIICalculation | null = null;
-    try {
-      const res = await this.dailyCiiRepository.getLatestByMmsi(shipData.mmsi);
-      latestCII = res?.cii[0]?.cii ?? null;
-      if (!latestCII) {
-        latestCII = {
-          notes: 'Default CII values',
-          ciiRequired: 62.56963961854975,
-          ciiAttained: 128.5322355807646,
-          ciiRating: 2.054226880070749,
-          ciiGrade: 'E',
-          totalDistance: 0.00043715911651287536,
-          fuelConsumption: {
-            fuelConsumptionMeTon: 0.000019404781014131148,
-            fuelConsumptionAeTon: 0.000031018133492449096,
-            totalFuelConsumptionTon: 0.000050422914506580244,
-          },
-        };
-      }
-    } catch (error) {
-      console.error(
-        `Error fetching latest CII for MMSI ${shipData.mmsi}:`,
-        error,
-      );
-    }
+    // The CII accumulated so far, or null for the first computation, which
+    // then uses the current segment only. There is deliberately no fallback:
+    // the hard-coded "Default CII values" (grade E) that used to be injected
+    // here leaked fabricated distance and fuel into every later value. A
+    // failing read is not treated as "no CII yet" either, as that would
+    // restart the accumulation.
+    const latestDailyCII = await this.dailyCiiRepository.getLatestByMmsi(
+      shipData.mmsi,
+    );
+    const latestCII: ICIICalculation | null =
+      latestDailyCII?.cii[0]?.cii ?? null;
 
     console.log(
       `Calculating CII for MMSI ${shipData.mmsi} with speed data:`,
@@ -145,6 +151,14 @@ export class CIIService {
       notes: notes,
     };
 
+    const unavailableReason = getCIIUnavailableReason(resultCII);
+    if (unavailableReason) {
+      // Skip the update rather than storing Infinity/NaN.
+      throw new CIINotAvailableError(
+        `CII not available for MMSI ${shipData.mmsi}: ${unavailableReason}`,
+      );
+    }
+
     await this.dailyCiiRepository.update(shipData.mmsi, resultCII);
     return resultCII;
   }
@@ -152,16 +166,20 @@ export class CIIService {
   async getCIIByMMSI(mmsi: string): Promise<ICIICalculation> {
     const ship = await this.shipRepository.getByMMSI(mmsi);
     if (!ship) {
-      throw new Error(`Ship with MMSI ${mmsi} not found`);
+      throw new NotFoundError(`Ship with MMSI ${mmsi} not found`);
     }
 
     const aisData: IAis | null = await this.aisRepository.getByMmsi(mmsi);
     if (!aisData) {
-      throw new Error(`AIS data for MMSI ${mmsi} not found`);
+      throw new CIINotAvailableError(
+        `CII not available for MMSI ${mmsi}: no AIS data`,
+      );
     }
 
     if (!aisData.positions || aisData.positions.length < 2) {
-      throw new Error(`Insufficient AIS positions for MMSI ${mmsi}`);
+      throw new CIINotAvailableError(
+        `CII not available for MMSI ${mmsi}: at least two AIS positions are needed`,
+      );
     }
     const ciiResult = await this.calculateCII(
       aisData.positions,

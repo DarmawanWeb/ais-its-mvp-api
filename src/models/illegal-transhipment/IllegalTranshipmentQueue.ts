@@ -26,6 +26,11 @@ const illegalTranshipmentQueueSchema: Schema = new Schema(
   },
   { timestamps: true },
 );
+
+// Pair lookups (getByMMSI / update / delete) and the worker's sorted scan.
+illegalTranshipmentQueueSchema.index({ ship1MMSI: 1, ship2MMSI: 1 });
+illegalTranshipmentQueueSchema.index({ priority: -1, createdAt: 1 });
+
 const IllegalTranshipmentQueue = mongoose.model<IIlegallTranshipmentQueue>(
   'IllegalTranshipmentQueue',
   illegalTranshipmentQueueSchema,

@@ -49,6 +49,9 @@ export class AisRepository implements IAisRepository {
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     return Ais.aggregate([
+      // Same filter as after $unwind, applied first so the
+      // 'positions.timestamp' index can skip ships without recent fixes.
+      { $match: { 'positions.timestamp': { $gte: cutoff } } },
       { $unwind: '$positions' },
       { $match: { 'positions.timestamp': { $gte: cutoff } } },
       { $sort: { 'positions.timestamp': -1 } },
@@ -73,6 +76,10 @@ export class AisRepository implements IAisRepository {
       {
         $match: {
           isBatam: true,
+          // Ships without any fix since cutoffTime are dropped by the
+          // 'positions.0' check below anyway; matching them here lets MongoDB
+          // use the 'positions.timestamp' index.
+          'positions.timestamp': { $gte: cutoffTime },
         },
       },
       {
@@ -99,20 +106,22 @@ export class AisRepository implements IAisRepository {
     return Ais.findOne({ mmsi });
   }
 
+  /**
+   * The ship with only its latest position. Positions are stored newest-first,
+   * so that is the first element (this used to return the last one, i.e. the
+   * oldest fix of the stored 24 h window).
+   */
   async getLastByMmsi(mmsi: string): Promise<IAis | null> {
-    const ais = await Ais.aggregate([
+    const [ais] = await Ais.aggregate([
       { $match: { mmsi: mmsi } },
       {
         $project: {
           mmsi: 1,
-          positions: { $slice: ['$positions', -1] },
+          positions: { $slice: ['$positions', 1] },
         },
       },
     ]);
-    if (ais.length > 1) {
-      return ais[1];
-    }
-    return ais[0] || null;
+    return ais ?? null;
   }
 
   async updatePositions(

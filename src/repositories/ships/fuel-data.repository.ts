@@ -1,6 +1,10 @@
 import FuelData from '../../models/ships/Telemetry';
 import { IFuelData } from '../../models/ships/Telemetry';
 
+/** Telemetry counts as active when its latest entry is at most this old. */
+export const TELEMETRY_ACTIVE_WINDOW_MINUTES = 1;
+const MS_PER_MINUTE = 60_000;
+
 export const FuelDataRepository = {
   async create(fuelData: IFuelData) {
     return await FuelData.create(fuelData);
@@ -21,9 +25,10 @@ export const FuelDataRepository = {
       const lastTimestamp = lastEntry.createdAt
         ? new Date(lastEntry.createdAt)
         : new Date(0);
+      // Before phase 0 this divided by 10 000, so "1 minute" was really 10 s.
       const differenceInMinutes =
-        (now.getTime() - lastTimestamp.getTime()) / 10000;
-      return differenceInMinutes <= 1;
+        (now.getTime() - lastTimestamp.getTime()) / MS_PER_MINUTE;
+      return differenceInMinutes <= TELEMETRY_ACTIVE_WINDOW_MINUTES;
     } catch (error) {
       console.error(`Error checking activity for MMSI ${mmsi}:`, error);
       return false;

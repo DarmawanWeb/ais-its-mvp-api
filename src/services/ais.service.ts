@@ -10,9 +10,36 @@ import {
 import { IllegalTranshipmentService } from './illegal-transhipment/illegal-transhipment.service';
 import { IllegalTranshipmentDetectionService } from './illegal-transhipment/illegal-transhipment-det.service';
 import { calculateDistance } from '../utils/cii/speed-calculation';
+import config from '../config/config';
+import logger from '../config/logger';
+
+const COASTLINE_FILE = 'data/indonesia.json';
+
+/** A new fix closer than this to the latest stored one is a duplicate. */
+export const DUPLICATE_MOVEMENT_THRESHOLD_METERS = 0.1;
+
+/**
+ * Duplicate-movement filter. `latest` must be the newest stored position:
+ * positions are stored newest-first, so that is `positions[0]`. (Before
+ * phase 0 the comparison used the oldest stored fix, about 24 h old.)
+ */
+export const isDuplicateMovement = (
+  latest: IAisPosition | undefined,
+  next: IAisPosition,
+): boolean =>
+  latest !== undefined &&
+  calculateDistance(latest, next).distanceInMeters <
+    DUPLICATE_MOVEMENT_THRESHOLD_METERS;
+
+export interface AisServiceOptions {
+  aisRepository?: AisRepository;
+  /** MMSIs whose CII is updated on every accepted position (CII_ENABLED_MMSIS). */
+  ciiEnabledMmsis?: Iterable<string>;
+}
 
 export class AisService {
   private aisRepository: AisRepository;
+  private readonly ciiEnabledMmsis: ReadonlySet<string>;
   private ciiService: CIIService = new CIIService();
   private illegalTranshipmentService: IllegalTranshipmentService =
     new IllegalTranshipmentService();
@@ -20,8 +47,11 @@ export class AisService {
     new IllegalTranshipmentDetectionService();
   private readonly ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  constructor() {
-    this.aisRepository = new AisRepository();
+  constructor(options: AisServiceOptions = {}) {
+    this.aisRepository = options.aisRepository ?? new AisRepository();
+    this.ciiEnabledMmsis = new Set(
+      options.ciiEnabledMmsis ?? config.cii.enabledMmsis,
+    );
   }
 
   private filterPositionsWithinOneDay(
@@ -65,13 +95,11 @@ export class AisService {
         return null;
       }
 
-      const minDistance = findNearestCoastDistance(
-        'data/indonesia.json',
-        lat,
-        lon,
-      );
       const timestamp = new Date(data.timestamp);
       timestamp.setSeconds(timestamp.getSeconds() - utc);
+      // An invalid timestamp (e.g. missing utc) would make the one-day filter
+      // below drop every stored position of the ship.
+      if (Number.isNaN(timestamp.getTime())) return null;
 
       let newPosition: IAisPosition;
       const existingAis = await this.aisRepository.getByMmsi(mmsi);
@@ -80,6 +108,7 @@ export class AisService {
       // CASE 1: Kapal baru
       // =======================
       if (!existingAis) {
+        const minDistance = findNearestCoastDistance(COASTLINE_FILE, lat, lon);
         const predictedNavStatus = calculatePredictedNavStatus(
           { sog, cog, hdg },
           { sog, cog, hdg },
@@ -109,8 +138,6 @@ export class AisService {
       // =======================
       // CASE 2: Kapal sudah ada
       // =======================
-      const lastData = await this.aisRepository.getLastByMmsi(mmsi);
-      const lastPosition = lastData?.positions?.[0];
       newPosition = {
         navstatus,
         lat,
@@ -122,19 +149,14 @@ export class AisService {
         predictedNavStatus: 0,
         ewsStatus: 0,
       };
-      if (lastPosition) {
-        const distance = calculateDistance(lastData.positions[0], newPosition);
-
-        if (distance.distanceInMeters < 0.1) {
-          console.log(
-            `⏩ Skip update untuk ${mmsi}: pergerakan hanya ${distance.distanceInMeters.toFixed(
-              3,
-            )} meter`,
-          );
-          return;
-        }
+      if (isDuplicateMovement(existingAis.positions?.[0], newPosition)) {
+        logger.debug(
+          `⏩ Skip update untuk ${mmsi}: pergerakan < ${DUPLICATE_MOVEMENT_THRESHOLD_METERS} meter dari posisi terakhir`,
+        );
+        return;
       }
 
+      const minDistance = findNearestCoastDistance(COASTLINE_FILE, lat, lon);
       const predictedNavStatus = calculatePredictedNavStatus(
         { sog, cog, hdg },
         existingAis.positions[0],
@@ -161,9 +183,15 @@ export class AisService {
 
       await this.aisRepository.updatePositions(mmsi, updatedPositions);
 
-      const validMMSIs = [''];
-      if (validMMSIs.includes(mmsi)) {
-        await this.ciiService.getCIIByMMSI(mmsi);
+      if (this.ciiEnabledMmsis.has(mmsi)) {
+        try {
+          await this.ciiService.getCIIByMMSI(mmsi);
+        } catch (error) {
+          // A missing CII must not stop the transhipment check below.
+          logger.warn(
+            `CII update skipped for MMSI ${mmsi}: ${(error as Error).message}`,
+          );
+        }
       }
 
       if (isBatam) {

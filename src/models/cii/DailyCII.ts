@@ -41,6 +41,9 @@ const dailyCIISchema: Schema = new Schema({
   ],
 });
 
+// Every daily CII endpoint and the CII update look ships up by MMSI.
+dailyCIISchema.index({ mmsi: 1 });
+
 const DailyCII = mongoose.model<IDailyCII>('DailyCII', dailyCIISchema);
 
 export { DailyCII };

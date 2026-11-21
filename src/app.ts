@@ -4,10 +4,16 @@ import promClient from 'prom-client';
 import helmet from 'helmet';
 import v1Routes from './routes/index';
 import cors from 'cors';
-import corsOptions from './config/cors';
+import corsOptions, { rejectDisallowedOriginForWrites } from './config/cors';
+import config from './config/config';
 
 const app: Application = express();
 
+// Needed for the client IP (login rate limit) behind a reverse proxy.
+app.set('trust proxy', config.server.trustProxy);
+
+// Every origin may read; logging in and writes need ALLOWED_ORIGINS (cors.ts).
+app.use(rejectDisallowedOriginForWrites);
 app.use(cors(corsOptions));
 app.use(helmet());
 app.use(express.json());

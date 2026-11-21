@@ -8,6 +8,7 @@ import config from '../src/config/config';
 import { connectSocket } from '../src/config/ws';
 import socketServer from '../src/config/ws-server';
 import {batamConnectSocket} from '../src/config/ws-batam'
+import { logSecurityWarnings } from '../src/config/security';
 
 const normalizePort = (val: number): number | boolean => {
   if (isNaN(val)) return false;
@@ -35,6 +36,7 @@ const onError = (error: NodeJS.ErrnoException): void => {
 };
 
 logger.info('Starting server...');
+logSecurityWarnings();
 
 const port = normalizePort(config.server.port || 3003);
 const wsServerPort = normalizePort(config.websocket.serverPort || 3004);

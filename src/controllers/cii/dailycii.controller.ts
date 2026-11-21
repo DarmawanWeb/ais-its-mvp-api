@@ -1,8 +1,18 @@
 import { Request, Response } from 'express';
 import { DailyCIIService } from '../../services/cii/dailycii.service';
 import { handleError } from '../../utils/error.handler';
+import { CIINotAvailableError } from '../../middlewares/error.middleware';
 
 const dailyCiiService = new DailyCIIService();
+
+/** 404 { code: 'CII_NOT_AVAILABLE' } when no daily CII exists for a ship yet. */
+const sendCIINotAvailable = (res: Response, mmsi: string) =>
+  handleError(
+    new CIINotAvailableError(
+      `CII not available for MMSI ${mmsi}: no daily CII has been computed yet`,
+    ),
+    res,
+  );
 
 export const createDailyCiiController = async (req: Request, res: Response) => {
   const { mmsi, ciiData } = req.body;
@@ -41,6 +51,10 @@ export const getDailyCiiByMmsiController = async (
   const { mmsi } = req.params;
   try {
     const dailyCiiRecord = await dailyCiiService.getDailyCiiByMmsi(mmsi);
+    if (!dailyCiiRecord || dailyCiiRecord.cii.length === 0) {
+      sendCIINotAvailable(res, mmsi);
+      return;
+    }
     res.status(200).json({
       message: 'Daily Cii record fetched successfully',
       data: dailyCiiRecord,
@@ -60,10 +74,7 @@ export const getLatestDailyCiiByMmsiController = async (
     const latestDailyCiiRecord =
       await dailyCiiService.getLatestDailyCiiByMmsi(mmsi);
     if (!latestDailyCiiRecord) {
-      res.status(404).json({
-        message: 'No Daily Cii record found for the given MMSI',
-        success: false,
-      });
+      sendCIINotAvailable(res, mmsi);
     } else {
       res.status(200).json({
         message: 'Latest Daily Cii record fetched successfully',
@@ -84,10 +95,7 @@ export const getAttainedCiiByMmsiController = async (
   try {
     const attainedCii = await dailyCiiService.getAttainedCiiByMmsi(mmsi);
     if (!attainedCii) {
-      res.status(404).json({
-        message: 'No attained CII data found for the given MMSI',
-        success: false,
-      });
+      sendCIINotAvailable(res, mmsi);
     } else {
       res.status(200).json({
         message: 'Attained CII data fetched successfully',

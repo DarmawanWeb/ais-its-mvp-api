@@ -7,6 +7,7 @@ import {
 import { IShipData } from '../../types/ship.type';
 import { perCalculateSecondFormulaFuel } from '../cii/second-formula';
 import { IAisPosition } from '../../models/Ais';
+import { evaluateArithmetic } from './safe-formula';
 
 const fuelMultipliers: Record<number, { ME: number; AE: number }> = {
   0: { ME: 1, AE: 1 },
@@ -47,18 +48,19 @@ const calculateTotalFuelTon = (
   return (totalFuelEstimate * fuelDensity) / 1000;
 };
 
-const evaluateFormula = (
+/**
+ * Fuel estimate of a first fuel formula, at least 0.5; an invalid formula
+ * yields 0.5. Formulas are evaluated by the safe arithmetic evaluator in
+ * safe-formula.ts; they used to run as JavaScript through `new Function`.
+ */
+export const evaluateFormula = (
   formula: string,
   context: { speedKnot: number },
 ): number => {
   try {
-    const safeEval = new Function(
-      'context',
-      `with (context) { return ${formula}; }`,
-    );
-    return Math.max(safeEval(context), 0.5);
+    return Math.max(evaluateArithmetic(formula, context), 0.5);
   } catch (e) {
-    console.error('Error evaluating formula:', e);
+    console.error('Error evaluating formula:', (e as Error).message);
     return 0.5;
   }
 };

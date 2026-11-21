@@ -3,6 +3,10 @@ import { AnnualCIIRepository } from '../repositories/cii/annualcii.repository';
 import { DailyCIIRepository } from '../repositories/cii/dailycii.repository';
 import { ZValueRepository } from '../repositories/cii/zvalue.repository';
 import {
+  CIINotAvailableError,
+  NotFoundError,
+} from '../middlewares/error.middleware';
+import {
   calculateAirLubrication,
   calculateResistanceReduceDevice,
   calculateHullCoating,
@@ -41,17 +45,19 @@ export class SEEMPService {
     const highestYearZValue = await this.zValueRepository.getHighestYear();
 
     if (!vesselData) {
-      throw new Error('Vessel data not found');
+      throw new NotFoundError('Vessel data not found');
     }
 
+    // SEEMP needs real CII data: answer 404 CII_NOT_AVAILABLE, not 500.
     if (!anualCii) {
-      throw new Error('Annual CII data not found');
+      throw new CIINotAvailableError(
+        `CII not available for MMSI ${mmsi}: no annual CII data`,
+      );
     }
-    if (!thisYearCii) {
-      throw new Error('This year CII data not found');
-    }
-    if (!thisYearCii.cii || thisYearCii.cii.length === 0) {
-      throw new Error('CII data for this year is not available');
+    if (!thisYearCii || !thisYearCii.cii || thisYearCii.cii.length === 0) {
+      throw new CIINotAvailableError(
+        `CII not available for MMSI ${mmsi}: no daily CII has been computed yet`,
+      );
     }
 
     const voyagePerYear = vesselData.generalData.annualVoyagePercentage ?? 0;

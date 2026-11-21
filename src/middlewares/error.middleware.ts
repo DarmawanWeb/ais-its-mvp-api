@@ -10,6 +10,8 @@ export const notFoundHandler = (req: Request, res: Response) => {
 
 export class BaseError extends Error {
   statusCode: number;
+  /** Optional machine-readable error code, returned to clients as `code`. */
+  code?: string;
   constructor(message: string, statusCode: number) {
     super(message);
     this.statusCode = statusCode;
@@ -37,5 +39,22 @@ export class NotFoundError extends BaseError {
 export class ConflictError extends BaseError {
   constructor(message: string) {
     super(message, 409);
+  }
+}
+
+/**
+ * No CII can be shown for a ship yet (nothing computed, or not enough data to
+ * compute it). Replaces the hard-coded "Default CII values" used before.
+ */
+export class CIINotAvailableError extends NotFoundError {
+  constructor(message: string) {
+    super(message);
+    this.code = 'CII_NOT_AVAILABLE';
+  }
+}
+
+export class ServiceUnavailableError extends BaseError {
+  constructor(message: string) {
+    super(message, 503);
   }
 }

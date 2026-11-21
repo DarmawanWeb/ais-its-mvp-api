@@ -45,6 +45,11 @@ const aisSchema = new Schema(
   { timestamps: true },
 );
 
+// Hot queries: Batam ships with recent fixes (every Batam message) and the
+// GET /ais fleet list (positions of the last 24 h).
+aisSchema.index({ isBatam: 1 });
+aisSchema.index({ 'positions.timestamp': -1 });
+
 const Ais = mongoose.model<IAis>('Ais', aisSchema);
 
 export default Ais;

@@ -46,6 +46,9 @@ const fuelDataSchema = new Schema<IFuelData>(
   { timestamps: true },
 );
 
+// Latest fuel entry of a ship (FuelDataRepository.isActive / getLatestByMMSI).
+fuelDataSchema.index({ mmsi: 1, createdAt: -1 });
+
 const FuelData = mongoose.model<IFuelData>('FuelData', fuelDataSchema);
 
 export default FuelData;
